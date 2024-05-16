@@ -1,0 +1,86 @@
+---
+- name: Install Kubernetes Cluster
+  hosts: all
+  become: true
+  vars:
+    k8s_version: "1.23.0"  # Versione di Kubernetes da installare
+    k8s_cluster_subnet: "10.244.0.0/16"  # Sottorete per i pod di Kubernetes
+  tasks:
+    - name: Update apt packages
+      apt:
+        update_cache: yes
+
+    - name: Install Docker
+      apt:
+        name: docker.io
+        state: present
+
+    - name: Install necessary packages for Kubernetes
+      apt:
+        name: "{{ item }}"
+        state: present
+      loop:
+        - apt-transport-https
+        - ca-certificates
+        - curl
+        - gnupg-agent
+        - software-properties-common
+
+    - name: Add Kubernetes apt key
+      apt_key:
+        url: https://packages.cloud.google.com/apt/doc/apt-key.gpg
+        state: present
+
+    - name: Add Kubernetes repository
+      apt_repository:
+        repo: deb https://apt.kubernetes.io/ kubernetes-xenial main
+        state: present
+
+    - name: Install Kubernetes packages
+      apt:
+        name: "{{ item }}"
+        state: present
+      loop:
+        - kubelet={{ k8s_version }}-00
+        - kubeadm={{ k8s_version }}-00
+        - kubectl={{ k8s_version }}-00
+
+    - name: Initialize Kubernetes cluster
+      command: kubeadm init --pod-network-cidr={{ k8s_cluster_subnet }}
+      args:
+        creates: /etc/kubernetes/admin.conf
+      register: kubeadm_output
+      changed_when: false
+
+    - name: Set up kubeconfig for the current user
+      copy:
+        content: "{{ lookup('file', '/etc/kubernetes/admin.conf') }}"
+        dest: "{{ ansible.env.HOME }}/.kube/config"
+        owner: "{{ ansible_env.SUDO_USER }}"
+        group: "{{ ansible_env.SUDO_USER }}"
+        mode: 0600
+      when: kubeadm_output.changed
+
+    - name: Install Flannel pod network addon
+      become_user: "{{ ansible_env.SUDO_USER }}"
+      command: kubectl apply -f https://raw.githubusercontent.com/coreos/flannel/master/Documentation/kube-flannel.yml
+      environment:
+        KUBECONFIG: "{{ ansible.env.HOME }}/.kube/config"
+      when: kubeadm_output.changed and 'pod network' in kubeadm_output.stdout
+
+    - name: Copy kubeconfig to worker nodes
+      copy:
+        src: "{{ ansible.env.HOME }}/.kube/config"
+        dest: "{{ ansible_env.HOME }}/.kube/config"
+        remote_src: yes
+      delegate_to: "{{ item }}"
+      loop: "{{ groups['workers'] }}"
+      when: kubeadm_output.changed
+
+    - name: Join worker nodes to the cluster
+      command: "{{ kubeadm_output.stdout_lines[0] }}"
+      when: kubeadm_output.changed and 'kubeadm join' in kubeadm_output.stdout
+
+    - name: Label control plane node
+      command: kubectl label node "{{ ansible_hostname }}" node-role.kubernetes.io/master=''
+      when: kubeadm_output.changed and 'kubeadm join' not in kubeadm_output.stdout

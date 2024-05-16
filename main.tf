@@ -1,0 +1,330 @@
+terraform {
+  required_providers {
+      aws = {
+      source = "hashicorp/aws"
+      version = "5.49.0"
+    }
+    
+    tls = {
+     source = "hashicorp/tls"
+     version = "4.0.5"
+    }
+
+    ansible = {
+      source = "ansible/ansible"
+      version = "1.3.0"
+    }
+  }
+}
+
+provider "aws" {
+  
+region = "eu-west-1"
+}
+
+
+# RISORSE LEGATE AL NETWORK
+
+# 1. custom VPC
+resource "aws_vpc" "kiratech_challenge_vpc" {  
+  cidr_block = "10.0.0.0/16"
+  enable_dns_hostnames = true
+
+  tags = {
+    Name = "kiratech_challenge_vpc"
+  }
+}
+
+# 2. subnet
+resource "aws_subnet" "kiratech_challenge_subnet" {  
+  vpc_id     = aws_vpc.kiratech_challenge_vpc.id
+  cidr_block = "10.0.1.0/24"
+  map_public_ip_on_launch = true
+
+  tags = {
+    Name = "kiratech_challenge_subnet"
+  }
+}
+
+# 3. internet gateway
+resource "aws_internet_gateway" "kiratech_challenge_internet_gateway" {
+  
+  vpc_id = aws_vpc.kiratech_challenge_vpc.id
+
+  tags = {
+    Name = "kiratech_challenge_internet_gateway"
+  }
+}
+
+# 4. custom rout table
+resource "aws_route_table" "kiratech_challenge_route_table" {
+
+  vpc_id = aws_vpc.kiratech_challenge_vpc.id
+
+  route {
+    cidr_block = "0.0.0.0/0"
+    gateway_id = aws_internet_gateway.kiratech_challenge_internet_gateway.id
+  }   
+
+  tags = {
+    Name = "example"
+  }
+}
+
+# 5. associazione della route table alla subnet
+resource "aws_route_table_association" "kiratech_challenge_route_association" {
+  subnet_id      = aws_subnet.kiratech_challenge_subnet.id
+  route_table_id = aws_route_table.kiratech_challenge_route_table.id
+}
+
+# 6. creazione del security group
+// 1. common ports
+resource "aws_security_group" "kiratech_challenge_security_group_common" {
+  name = "kiratech_challenge_security_group_common"
+  vpc_id = aws_vpc.kiratech_challenge_vpc.id
+
+  tags = {
+    Name = "kiratech_challenge_security_group_common"
+  }
+
+  ingress {
+    description = "Allow HTTPS"
+    from_port        = 443
+    to_port          = 443
+    protocol         = "tcp"
+    cidr_blocks      = ["0.0.0.0/0"]
+  }
+
+  ingress {
+    description = "Allow HTTP"
+    from_port        = 80
+    to_port          = 80
+    protocol         = "tcp"
+    cidr_blocks      = ["0.0.0.0/0"]
+  }
+
+  ingress {
+    description = "Allow SSH"
+    from_port        = 22
+    to_port          = 22
+    protocol         = "tcp"
+    cidr_blocks      = ["0.0.0.0/0"]
+  }
+
+  egress {
+    from_port        = 0
+    to_port          = 0
+    protocol         = "-1"
+    cidr_blocks      = ["0.0.0.0/0"]
+    
+  }
+}
+
+// 2. porte control plane
+resource "aws_security_group" "kiratech_challenge_security_group_control_plane" {
+  name = "kiratech_challenge_security_group_control_plane"
+  vpc_id = aws_vpc.kiratech_challenge_vpc.id
+
+  tags = {
+    Name = "kiratech_challenge_security_group_control_plane"
+  }
+
+  ingress {
+    description = "Allow HTTPS"
+    from_port        = 6443
+    to_port          = 6443
+    protocol         = "tcp"
+    cidr_blocks      = ["0.0.0.0/0"]
+  }
+
+  ingress {
+    description = "Kubelet API"
+    from_port        = 10250
+    to_port          = 10250
+    protocol         = "tcp"
+    cidr_blocks      = ["0.0.0.0/0"]
+  }
+
+  ingress {
+    description = "kube-scheduler"
+    from_port        = 10259
+    to_port          = 10259
+    protocol         = "tcp"
+    cidr_blocks      = ["0.0.0.0/0"]
+  }
+
+  ingress {
+    description = "kube-controller-manager"
+    from_port        = 10257
+    to_port          = 10257
+    protocol         = "tcp"
+    cidr_blocks      = ["0.0.0.0/0"]
+  }
+
+  ingress {
+    description = "Etcd server client API"
+    from_port        = 2379
+    to_port          = 2380
+    protocol         = "tcp"
+    cidr_blocks      = ["0.0.0.0/0"]
+  }
+ 
+}
+
+// 3. porte worker node
+resource "aws_security_group" "kiratech_challenge_security_group_worker_nodes" {
+  name = "kiratech_challenge_security_group_worker_nodes"
+  vpc_id = aws_vpc.kiratech_challenge_vpc.id
+
+  ingress {
+    description = "Kubelet API"
+    from_port        = 10250
+    to_port          = 10250
+    protocol         = "tcp"
+    cidr_blocks      = ["0.0.0.0/0"]
+  }
+
+  ingress {
+    description = "NodePort Services"
+    from_port        = 30000
+    to_port          = 32767
+    protocol         = "tcp"
+    cidr_blocks      = ["0.0.0.0/0"]
+  }
+}
+
+// 4. porte di backend UDP flannel
+resource "aws_security_group" "kiratech_challenge_security_group_flannel" {
+  name = "kiratech_challenge_security_group_flannel"
+  vpc_id = aws_vpc.kiratech_challenge_vpc.id
+  tags = {
+    Name = "kiratech_challenge_security_group_flannel"
+  }
+
+  ingress {
+    description = "udp backend"
+    from_port        = 8285
+    to_port          = 8285
+    protocol         = "udp"
+    cidr_blocks      = ["0.0.0.0/0"]
+  }
+
+  ingress {
+    description = "udp vxlan backend"
+    from_port        = 8472
+    to_port          = 8472
+    protocol         = "udp"
+    cidr_blocks      = ["0.0.0.0/0"]
+  }
+
+}
+
+
+
+# RISORSE LEGATE ALLE ISTANZE
+
+ resource "tls_private_key" "kiratech_challenge_private_key" {
+   algorithm = "RSA"
+   rsa_bits  = 4096
+
+   provisioner "local-exec" {
+     command= "echo '${self.public_key_pem}' > ./pubkey.pem"
+   }
+ }
+
+ resource "aws_key_pair" "kiratech_challenge_key" {
+   key_name   = var.kiratech_challenge_key_name
+   public_key = tls_private_key.kiratech_challenge_private_key.public_key_openssh
+  
+   provisioner "local-exec" {
+     command= "echo '${tls_private_key.kiratech_challenge_private_key.private_key_pem}' > ./private-key.pem"
+   }
+ }
+
+  resource "aws_instance" "kiratech_challenge_control_plane" {
+    ami           = var.kiratech_challenge_ami 
+    subnet_id = aws_subnet.kiratech_challenge_subnet.id
+    instance_type = "t2.medium"
+    key_name = aws_key_pair.kiratech_challenge_key.key_name
+    associate_public_ip_address = true
+    
+    security_groups = [
+      aws_security_group.kiratech_challenge_security_group_common.id,
+      aws_security_group.kiratech_challenge_security_group_control_plane.id,
+      aws_security_group.kiratech_challenge_security_group_flannel.id
+    ]
+
+    root_block_device {
+      volume_size = 14
+      volume_type = "gp2"
+    }
+
+    tags = {
+      Name = "kiratech_challenge_control_plane"
+    }
+
+    provisioner "local-exec" {
+      command = "echo 'master ${self.public_ip}' >> ./files/hosts"
+    }
+ }
+
+ resource "aws_instance" "kiratech_challenge_worker_nodes" {
+   
+   count = var.kiratech_challenge_instance_count
+   ami = var.kiratech_challenge_ami
+   instance_type = var.kiratech_challenge_worker_instance_type
+   subnet_id = aws_subnet.kiratech_challenge_subnet.id
+   key_name = aws_key_pair.kiratech_challenge_key.key_name
+   associate_public_ip_address = true
+
+   security_groups = [
+      aws_security_group.kiratech_challenge_security_group_common.id,
+      aws_security_group.kiratech_challenge_security_group_worker_nodes.id,
+      aws_security_group.kiratech_challenge_security_group_flannel.id
+    ]
+
+    tags = {
+      Name = "kiratech_challenge Worker${count.index}"
+      Role = "Control Plane"
+    }
+
+    provisioner "local-exec" {
+      command = "echo 'worker-${count.index} ${self.public_ip}' >> ./files/hosts"
+    }
+ }
+
+#RISORSE LEGATE AD ANSIBLE
+
+resource "ansible_host" "kiratech_challenge_control_plane_host" {
+  
+  depends_on = [ 
+    aws_instance.kiratech_challenge_control_plane
+  ]
+
+  name = "control_plane" 
+  groups = ["master"]
+  variables = {
+    ansible_user = "ubuntu"
+    ansible_host = aws_instance.kiratech_challenge_control_plane.public_ip
+    ansible_ssh_private_key_file = "./private-key.pem"
+    node_hostname = "master"
+  }
+}
+
+resource "ansible_host" "kiratech_challenge_worker_nodes_host" {
+  
+  depends_on = [ 
+    aws_instance.kiratech_challenge_worker_nodes
+   ]
+    
+  count = var.kiratech_challenge_instance_count
+  name = "worker-${count.index}" 
+  groups = [ "workers" ]
+  variables = {
+    node_hostname = "worker-${count.index}"
+    ansible_user = "ubuntu"
+    ansible_host = aws_instance.kiratech_challenge_worker_nodes[count.index].public_ip
+    ansible_ssh_private_key_file = "./private-key.pem"
+    node_hostname = "worker-${count.index}"
+  }
+}
