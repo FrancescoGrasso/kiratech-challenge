@@ -1,5 +1,3 @@
-La repository è purtroppo sprovvista dell'applicazione richiesta dalla comanda. Sono riuscito a creare con successo l'ecosistema necessario al deployment del cluster tramite terraform, utilizzando aws come provider. Ho anche creato il playbook e gli hosts per ansible ma qualcosa non funziona quando vado a lanciare il playbook.
-
 Di seguito una descrizione dei file.
 
 main.tf: Questo file contiene il codice Terraform necessario per creare l'infrastruttura di base su AWS. Qui definiamo la nostra VPC, le subnet, i gruppi di sicurezza e le istanze EC2 che costituiranno il cluster Kubernetes.
